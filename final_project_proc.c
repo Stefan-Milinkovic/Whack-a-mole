@@ -16,6 +16,9 @@
 #define PROCFS_MAX_SIZE 	100  	// Sample Size    
 static DEFINE_MUTEX(lock);         
 static char PROC_BUF[PROCFS_MAX_SIZE];       //This is statically allocated, So be aware this is the kernel memory.
+static bool gameActive = false;  // Tracks game state
+static bool irq_requested[NUM_BUTTONS] = {false}; // Tracks IRQs have been successfully requested
+
 
 // ---------- PROC FUNCTIONS ----------
 ssize_t procfile_read(struct file *file, char __user *user_buffer, size_t count, loff_t *position); 			//A Read operation is requested from this file.
@@ -78,7 +81,7 @@ static irqreturn_t button_irq_handler(int irq, void *dev_id) {
     unsigned int led_gpio = GPIO_LEDS[btn_index];   // Get GPIO for the corresponding LED
 
     // Checking if the button is toggled
-    if (button_debounce()) {
+    if (button_debounce() && gameActive) {
         bool is_on; 
 
         mutex_lock(&lock);  // Lock mutex to protect the LED toggling and button presses
@@ -126,6 +129,8 @@ static int setup_button_irq(int btn_index) {
     if (retval) {
         pr_info("Unable to request IRQ: %d for Button %d\n", retval, btn_index);
         return retval;
+    } else {
+        irq_requested[btn_index] = true; // Mark this IRQ as successfully requested
     }
 
     // Print successful IRQ setup
@@ -175,7 +180,6 @@ ssize_t procfile_read(struct file *file, char __user *user_buffer, size_t count,
  * Handles write operations to the /proc file.
  * Function is triggered when a process writes to the proc file. It reads the 
  * command from the user buffer, and performs actions based on the command 
- * (e.g., turning LEDs on or off).
  *
  * @param file Pointer to the file structure
  * @param user_buffer Buffer in user space containing the command to process.
@@ -184,32 +188,43 @@ ssize_t procfile_read(struct file *file, char __user *user_buffer, size_t count,
  * @return The number of bytes processed if successful, or a negative error code.
  */
 ssize_t procfile_write(struct file *file, const char __user *user_buffer, size_t count, loff_t *position) {
-    char command[20];   // Buffer to store command from user space
+    char command[20];	// Buffer to store command from user space
     if (count > sizeof(command) - 1)
-        return -EINVAL;    // Return invalid argument error if command is too long
-    
+        return -EINVAL;	// Return invalid argument error if command is too long
+
     if (copy_from_user(command, user_buffer, count))
-        return -EFAULT; // Return bad address error if copy from user fails
-    
-    command[count] = '\0'; // Null terminate the command string
-    
-    // Process the command and toggle the appropriate LED
-    if (strcmp(command, "red_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[0], 1);    // Turn on the red LED
-    } else if (strcmp(command, "blue_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[1], 1);    // Turn on the blue LED
-    } else if (strcmp(command, "green_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[2], 1);    // Turn on the green LED
-    } else if (strcmp(command, "yellow_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[3], 1);    // Turn on the yellow LED
-    } else if (strcmp(command, "LED_OFF") == 0) {
+        return -EFAULT;	// Return bad address error if copy from user fails
+
+    command[count] = '\0';	// Null terminate the command string
+
+	// Command to start the game
+    if (strcmp(command, "GAME_START") == 0) {
+        gameActive = true;  // Set game as active
+        pr_info("Game started\n");
+    } else if (strcmp(command, "GAME_STOP") == 0) {
+        gameActive = false;  // Set game as inactive
         for (int i = 0; i < 4; i++) {
-            gpio_set_value(GPIO_LEDS[i], 0);    // Turn off all LEDs
+            gpio_set_value(GPIO_LEDS[i], 0);  // Turn off all LEDS when the game stops
+        }
+        pr_info("Game stopped\n");
+    } else if (gameActive) {  // Handle LED commands only if the game is active
+        if (strcmp(command, "red_ON") == 0) {
+            gpio_set_value(GPIO_LEDS[0], 1);	// Turn on the red LED
+        } else if (strcmp(command, "blue_ON") == 0) {
+            gpio_set_value(GPIO_LEDS[1], 1);	// Turn on the blue LED
+        } else if (strcmp(command, "green_ON") == 0) {
+            gpio_set_value(GPIO_LEDS[2], 1);	// Turn on the green LED
+        } else if (strcmp(command, "yellow_ON") == 0) {
+            gpio_set_value(GPIO_LEDS[3], 1);	// Turn on the yellow LED
+        } else if (strcmp(command, "LED_OFF") == 0) {
+            for (int i = 0; i < 4; i++) {
+                gpio_set_value(GPIO_LEDS[i], 0);	// Turn off all LEDs
+            }
         }
     }
-
-    return count;   // Return the number of bytes processed
+    return count;	// Return the number of bytes processed
 }
+
 
 // Initialize the module 
 static int __init my_module_init(void) {
@@ -237,9 +252,10 @@ static void __exit my_module_exit(void) {
 	
 	// free the IRQ and GPIOs 
     for (int i = 0; i < NUM_BUTTONS; ++i) {
-        free_irq(irq_numbers[i], (void *)&GPIO_LEDS[i]);    // Free the IRQ assigned to button using the button's LED GPIO as the device ID
+        free_irq(irq_numbers[i], (void *)(size_t)i);    // Free the IRQ assigned to button using the button's LED GPIO as the device ID
         gpio_free(GPIO_BTNS[i]);
         gpio_free(GPIO_LEDS[i]);
+        irq_requested[i] = false; // Mark as free
     }
     pr_info("Module exited successfully\n");
 }
