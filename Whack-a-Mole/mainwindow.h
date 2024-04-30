@@ -18,11 +18,13 @@
 class MoleTimer : public QObject {
     Q_OBJECT
 public:
-    explicit MoleTimer(QObject *parent = nullptr);
-    void runTimer(int interval);  // Runs a sleep timer for the specified interval, then emits timeout.
-
+    explicit MoleTimer(QObject *parent = nullptr) : QObject(parent) {}
+    void runTimer(int interval) {    // Run a sleep timer for specificed interval
+        QThread::sleep(interval);
+        emit timeout();
+    }
 signals:
-    void timeout();  // Signal emitted when the timer completes.
+    void timeout();    // Signal emitted when timer completes
 };
 
 class MainWindow : public QMainWindow
