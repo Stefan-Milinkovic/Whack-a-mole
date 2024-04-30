@@ -8,34 +8,36 @@
 #include <QDebug>
 #include <QThread>
 
+// Constructor for MainWindow initializes the game UI, sets up timers for moles
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), score(0), currentMole(-1)
 {
-
-    setupUi();
+    setupUi();  // set up the UI
+    // Create and configure timers for each mole button
     for(int i = 0; i < moleButtons.size(); ++i){
         QTimer *timer = new QTimer(this);
         timer->setInterval(1500);   // Moles pop up for 1.5 second
-        connect(timer, &QTimer::timeout, [this, i]() { moleTimeout(i); });
-        moleVisibilityTimers.push_back(timer);
+        connect(timer, &QTimer::timeout, [this, i]() { moleTimeout(i); });  // Connect timeout signal to handler
+        moleVisibilityTimers.push_back(timer);  // Store the timer in a list
     }
 
     // Set up polling timer for proc file
     QTimer *pollTimer = new QTimer(this);
-    connect(pollTimer, &QTimer::timeout, this, &MainWindow::pollProcFile);
-    pollTimer->start(100);  // Poll every 100 milliseconds
+    connect(pollTimer, &QTimer::timeout, this, &MainWindow::pollProcFile);  // Connect the timer's timeout signal to the polling function
+    pollTimer->start(100);  // Start the timer to poll every 100 milliseconds
 }
 
+// Sets up user interface, initializes widgets, sets up game logic timers and connect signals
 void MainWindow::setupUi()
 {
-    QWidget *centralWidget = new QWidget(this);
-    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-    moleGrid = new QGridLayout();
+    QWidget *centralWidget = new QWidget(this);     // Create the central widget
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);   // Main layout for the central widget
+    moleGrid = new QGridLayout();   // Grid layout for mole buttons
 
-    scoreLabel = new QLabel("Score: 0", this);
-    startButton = new QPushButton("Start Game", this);
-    endButton = new QPushButton("End Game", this);
+    scoreLabel = new QLabel("Score: 0", this);  // Initialize the score label
+    startButton = new QPushButton("Start Game", this);  // Button to start the game
+    endButton = new QPushButton("End Game", this);  // Button to end the game
 
-    // Setup mole buttons
+    // Setup mole buttons with the respective colors
     const QStringList colors = {"red", "blue", "green", "yellow"};
     int i = 0;
     for (const QString &color : colors) {
@@ -43,12 +45,12 @@ void MainWindow::setupUi()
         button->setStyleSheet(QString("background-color: %1").arg(color));
         // button->setStyleSheet("QPushButton { border: none; }"); // Remove borders
         button->setFixedSize(100, 100); // button sizes
-        moleButtons.append(button);
-        moleGrid->addWidget(button, i / 2, i % 2);
-        connect(button, &QPushButton::clicked, [this, i] { moleWhacked(i); });
+        moleButtons.append(button); // Add to list of mole buttons
+        moleGrid->addWidget(button, i / 2, i % 2);  // Add button to the grid layout
+        connect(button, &QPushButton::clicked, [this, i] { moleWhacked(i); });  // Connect button click to action
         i++;
 
-        // Threaded
+        // Setup and start a thread for mole timers to manage visibility
         moleTimerWorker = new MoleTimer();
         moleTimerThread = new QThread(this);
         moleTimerWorker->moveToThread(moleTimerThread);
@@ -58,50 +60,53 @@ void MainWindow::setupUi()
         moleTimerThread->start();
     }
 
+    // Add all elements to the main layout and set it as the central widget
     mainLayout->addWidget(scoreLabel);
     mainLayout->addLayout(moleGrid);
     mainLayout->addWidget(startButton);
     mainLayout->addWidget(endButton);
-
     setCentralWidget(centralWidget);
 
+     // Initialize timers for game timing and updates
     gameTimer = new QTimer(this);
     moleTimer = new QTimer(this);
-
     connect(startButton, &QPushButton::clicked, this, &MainWindow::startGame);
     connect(endButton, &QPushButton::clicked, this, &MainWindow::endGame);
     connect(gameTimer, &QTimer::timeout, this, &MainWindow::endGame);
     connect(moleTimer, &QTimer::timeout, this, &MainWindow::updateGame);
 }
 
+// Polls the proc file for button press data from the kernel module
 void MainWindow::pollProcFile() {
     QFile file("/proc/whackamole");
     if (file.open(QIODevice::ReadOnly)) {
-        QTextStream stream(&file);
-        QString line = stream.readLine();
-        qDebug() << "Read from /proc:" << line;
+        QTextStream stream(&file);  // Create a text stream for reading
+        QString line = stream.readLine();   // Read a single line from the file
+        qDebug() << "Read from /proc:" << line; // Debug output to log the line read from /proc
         if (!line.isEmpty()) {
-            processButtonPress(line);  // Function to process button press
+            processButtonPress(line);  // Process the line if it's not empty
         }
-        file.close();
+        file.close();   // Close the file after reading
     }
 }
 
+// Processes the button press information received from the /proc file
 void MainWindow::processButtonPress(const QString &buttonInfo) {
-    QRegExp regex("Button (\\d+) pressed");
-    int btnIndex = -1;  // changed from gpioNumber to btnIndex for clarity
+    QRegExp regex("Button (\\d+) pressed"); // Regular expression to extract the button index
+    int btnIndex = -1;  // store the extracted button index
 
+    // Check if the button index is found in the string
     if (regex.indexIn(buttonInfo) != -1) {
-        btnIndex = regex.cap(1).toInt();
+        btnIndex = regex.cap(1).toInt();    // Convert the regex string to an int
     }
 
-    qDebug() << "Regex grabbed:" << btnIndex;
+    qDebug() << "Regex grabbed:" << btnIndex;   // Debug output the extracted button index
 
+    // If a valid index is found and it matches the current mole
     if (btnIndex != -1 && btnIndex == currentMole) {
         moleWhacked(btnIndex);
     }
 }
-
 
 // Function for sending commands to the kernel module
 void sendCommandToKernelModule(const QString &command) {
