@@ -12,11 +12,13 @@
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), score(0), currentMole(-1)
 {
     setupUi();  // set up the UI
+
     // Create and configure timers for each mole button
     for(int i = 0; i < moleButtons.size(); ++i){
         QTimer *timer = new QTimer(this);
         timer->setInterval(1500);   // Moles pop up for 1.5 second
-        connect(timer, &QTimer::timeout, [this, i]() { moleTimeout(i); });  // Connect timeout signal to handler
+        connect(timer, &QTimer::timeout, [this, i]() {
+            moleTimeout(i); });  // Connect timeout signal to handler
         moleVisibilityTimers.push_back(timer);  // Store the timer in a list
     }
 
@@ -102,10 +104,7 @@ void MainWindow::processButtonPress(const QString &buttonInfo) {
 
     qDebug() << "Regex grabbed:" << btnIndex;   // Debug output the extracted button index
 
-    // If a valid index is found and it matches the current mole
-    if (btnIndex != -1 && btnIndex == currentMole) {
-        moleWhacked(btnIndex);
-    }
+    moleWhacked(btnIndex);  // Whack the mole
 }
 
 /** Function for sending commands to the kernel module via the proc file
@@ -123,7 +122,8 @@ void sendCommandToKernelModule(const QString &command) {
 // Funtion to start the game
 void MainWindow::startGame()
 {
-    score = 0;    // Initialize the score to 0 
+    sendCommandToKernelModule("GAME_START");
+    score = 0;    // Initialize the score to 0
     scoreLabel->setText("Score: 0");    // set the GUI text score to 0
     startButton->setEnabled(false);    // Disable the start game button
     gameTimer->start(20000); // 20 seconds game
@@ -133,14 +133,15 @@ void MainWindow::startGame()
 // Function to end the game
 void MainWindow::endGame()
 {
+    sendCommandToKernelModule("GAME_STOP");
     gameTimer->stop();    // Stop the game timer
     moleTimer->stop();    // Stop the mole timers
     startButton->setEnabled(true);    // Reenable the start button
     hideMole();    // Hide the moles
-    qDebug() << "Final Score:" << score;    // Show the final score in debug 
+    qDebug() << "Final Score:" << score;    // Show the final score in debug
 }
 
-// Function to update game state 
+// Function to update game state
 void MainWindow::updateGame()
 {
     showMole();    // Show moles as they are generated
@@ -148,6 +149,7 @@ void MainWindow::updateGame()
 
 // Function to determine if a mole not whacked in the timing requirement
 void MainWindow::moleTimeout(int index) {    // Check if the timed out mole is the current mole
+    qDebug() << "Mole timeout called for index:" << index;
     if (index == currentMole) {
         score -= 1; // Deduct score for not hitting the mole in time
         scoreLabel->setText(QString("Score: %1").arg(score));    // Update score
@@ -170,12 +172,14 @@ void MainWindow::moleWhacked(int moleIndex)
     {    // Check if the correct mole was whacked
         score += 3;    // Increase score on correct hit
         qDebug() << "Score increased to:" << score;    // Debug what the score was increased to
+
         moleButtons[moleIndex]->setIcon(QIcon(":/images/bonk.png"));    // Mole's icon changed to the "whack" image
         moleButtons[moleIndex]->setIconSize(moleButtons[moleIndex]->size());    // Adjust icon size to fit the button
-        QTimer::singleShot(500, this, [this] { // Start a timer to hide the mole
+
+        QTimer::singleShot(250, this, [this] { // Start a timer to hide the mole
             hideMole();    // Hide the mole after a short delay
             sendCommandToKernelModule("LED_OFF"); // Turn off LED
-        }); 
+        });
     }
     else
     {
@@ -192,10 +196,12 @@ void MainWindow::showMole() {
 
     int index = QRandomGenerator::global()->bounded(moleButtons.size());    // Randomly select a mole index
     currentMole = index;    // Update the current mole index
-    QString moleColor = moleButtons[index]->styleSheet().split(": ").last();    // Get the color of the mole from its style sheet   
+
+    QString moleColor = moleButtons[index]->styleSheet().split(": ").last();    // Get the color of the mole from its style sheet
     moleButtons[index]->setIcon(QIcon(QString(":/images/%1Mole.png").arg(moleColor)));    // Set the mole's icon based on its color
     moleButtons[index]->setIconSize(moleButtons[index]->size());    // Ensure the icon size matches the button size
-    moleVisibilityTimers[index]->start(); // Start the timer for this mole
+
+    moleVisibilityTimers[index]->start(1500); // Start the timer for this mole
     sendCommandToKernelModule(moleColor + "_ON");   // Send command to turn on corresponding LED
 }
 
