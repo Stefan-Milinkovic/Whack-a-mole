@@ -69,20 +69,19 @@ static int button_debounce(void) {
 
 // General button IRQ handler function
 static irqreturn_t button_irq_handler(int irq, void *dev_id) {
-    unsigned int led_gpio = *(unsigned int *)dev_id;
-    // int btn_index = (int)(dev_id - GPIO_LEDS); // Calculate button index based on LED GPIO array position
-    
+    int btn_index = (int)(size_t)dev_id;
+    unsigned int led_gpio = GPIO_LEDS[btn_index];
+
     if (button_debounce()) {
         bool is_on;
 
-        // Protect the read-modify-write sequence from concurrent access
         mutex_lock(&lock);
         is_on = gpio_get_value(led_gpio);
-        gpio_set_value(led_gpio, !is_on);	// Toggle LED
-        // last_button_pressed = btn_index; // Store last button pressed
+        gpio_set_value(led_gpio, !is_on);  // Toggle LED
+        snprintf(PROC_BUF, PROCFS_MAX_SIZE, "Button %d pressed", btn_index);  // Store button press info in PROC_BUF
         mutex_unlock(&lock);
 
-        pr_info("LED on GPIO %d toggled\n", led_gpio);
+        pr_info("LED on GPIO %d toggled, Button %d pressed\n", led_gpio, btn_index);
     }
     return IRQ_HANDLED;
 }
@@ -111,7 +110,8 @@ static int setup_button_irq(int btn_index) {
     irq_numbers[btn_index] = gpio_to_irq(btn_gpio);
     
     // set up threaded IRQ handler
-    retval = request_threaded_irq(irq_numbers[btn_index], NULL, button_irq_handler, IRQF_TRIGGER_LOW | IRQF_ONESHOT, "MyCustomIRQProc", (void *)&GPIO_LEDS[btn_index]);
+	retval = request_threaded_irq(irq_numbers[btn_index], NULL, button_irq_handler, IRQF_TRIGGER_LOW | IRQF_ONESHOT, "MyCustomIRQProc", (void *)(size_t)btn_index);
+
 
     if (retval) {
         pr_info("Unable to request IRQ: %d for Button %d\n", retval, btn_index);
@@ -123,34 +123,27 @@ static int setup_button_irq(int btn_index) {
 }
 
 // ---------- PROC OPERATIONS ----------
-// Reading data (game state, LED/ button status
 ssize_t procfile_read(struct file *file, char __user *user_buffer, size_t count, loff_t *position) {
-    int len;
-    char buffer[PROCFS_MAX_SIZE];
+    int len = strlen(PROC_BUF);  // Get the length of the string in PROC_BUF
 
-    // Check if position is beyond the available data, to avoid repeated reads
     if (*position > 0) {
         return 0;  // All data has been read, return 0 to signify no more data to read
     }
 
-    // Construct a string with the current LED states
-    len = snprintf(buffer, PROCFS_MAX_SIZE, "LED States - RED: %d, BLUE: %d, GREEN: %d, YELLOW: %d\n",
-                   gpio_get_value(GPIO_LEDS[0]),  // State of RED LED
-                   gpio_get_value(GPIO_LEDS[1]),  // State of BLUE LED
-                   gpio_get_value(GPIO_LEDS[2]),  // State of GREEN LED
-                   gpio_get_value(GPIO_LEDS[3])); // State of YELLOW LED
-
-    // Check buffer length against count to avoid buffer overflow
     if (count < len) {
         return -EFAULT;  // User buffer is too small for the data
     }
 
-    // Copy the buffer to user space
-    if (copy_to_user(user_buffer, buffer, len)) {
+    mutex_lock(&lock);
+    if (copy_to_user(user_buffer, PROC_BUF, len)) {
+        mutex_unlock(&lock);
         return -EFAULT;  // Failed to copy data to user space
     }
 
+    PROC_BUF[0] = '\0';  // Clear the buffer after read
     *position += len;  // Update the position for the next read operation
+    mutex_unlock(&lock);
+
     return len;  // Return the number of bytes read
 }
 
@@ -187,7 +180,7 @@ ssize_t procfile_write(struct file *file, const char __user *user_buffer, size_t
 static int __init my_module_init(void) {
 	
 	// For the proc file
-	memset(PROC_BUF,0,PROCFS_MAX_SIZE);	// Zero Out our buffer 
+	memset(PROC_BUF,0,PROCFS_MAX_SIZE);	// Zero Out  buffer 
   	proc_create(PROCFS_NAME, 0666, NULL, &proc_fops);	// Create proc file
   	pr_info("Proc init completed \n");
 
