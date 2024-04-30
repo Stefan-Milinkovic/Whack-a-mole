@@ -40,6 +40,8 @@ private slots:
     void updateGame();
     void moleWhacked(int moleIndex);
     void moleTimeout(int index);
+    void pollProcFile();
+    void processButtonPress(const QString &buttonInfo);
 
 private:
     QPushButton *startButton;
