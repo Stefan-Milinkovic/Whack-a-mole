@@ -10,13 +10,19 @@
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), score(0), currentMole(-1)
 {
+
     setupUi();
     for(int i = 0; i < moleButtons.size(); ++i){
         QTimer *timer = new QTimer(this);
-        timer->setInterval(1500);   // Moles pop up for 1 second
+        timer->setInterval(1500);   // Moles pop up for 1.5 second
         connect(timer, &QTimer::timeout, [this, i]() { moleTimeout(i); });
         moleVisibilityTimers.push_back(timer);
     }
+
+    // Set up polling timer for proc file
+    QTimer *pollTimer = new QTimer(this);
+    connect(pollTimer, &QTimer::timeout, this, &MainWindow::pollProcFile);
+    pollTimer->start(100);  // Poll every 100 milliseconds
 }
 
 void MainWindow::setupUi()
@@ -67,6 +73,35 @@ void MainWindow::setupUi()
     connect(gameTimer, &QTimer::timeout, this, &MainWindow::endGame);
     connect(moleTimer, &QTimer::timeout, this, &MainWindow::updateGame);
 }
+
+void MainWindow::pollProcFile() {
+    QFile file("/proc/whackamole");
+    if (file.open(QIODevice::ReadOnly)) {
+        QTextStream stream(&file);
+        QString line = stream.readLine();
+        qDebug() << "Read from /proc:" << line;
+        if (!line.isEmpty()) {
+            processButtonPress(line);  // Function to process button press
+        }
+        file.close();
+    }
+}
+
+void MainWindow::processButtonPress(const QString &buttonInfo) {
+    QRegExp regex("Button (\\d+) pressed");
+    int btnIndex = -1;  // changed from gpioNumber to btnIndex for clarity
+
+    if (regex.indexIn(buttonInfo) != -1) {
+        btnIndex = regex.cap(1).toInt();
+    }
+
+    qDebug() << "Regex grabbed:" << btnIndex;
+
+    if (btnIndex != -1 && btnIndex == currentMole) {
+        moleWhacked(btnIndex);
+    }
+}
+
 
 // Function for sending commands to the kernel module
 void sendCommandToKernelModule(const QString &command) {
