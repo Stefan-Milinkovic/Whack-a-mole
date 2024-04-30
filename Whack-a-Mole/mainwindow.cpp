@@ -108,96 +108,113 @@ void MainWindow::processButtonPress(const QString &buttonInfo) {
     }
 }
 
-// Function for sending commands to the kernel module
+/** Function for sending commands to the kernel module via the proc file
+*   @param command This is the command string to be send to the kernel module
+*/
 void sendCommandToKernelModule(const QString &command) {
   QFile file("/proc/whackamole");
   if(file.open(QIODevice::WriteOnly)) {
-    QTextStream stream(&file);
-    stream << command;
-    file.close();
+    QTextStream stream(&file);    // Create a text stream for writing
+    stream << command;    // Write the command to the file
+    file.close();    // Close the file after writing
   }
 }
 
+// Funtion to start the game
 void MainWindow::startGame()
 {
-    score = 0;
-    scoreLabel->setText("Score: 0");
-    startButton->setEnabled(false);
+    score = 0;    // Initialize the score to 0 
+    scoreLabel->setText("Score: 0");    // set the GUI text score to 0
+    startButton->setEnabled(false);    // Disable the start game button
     gameTimer->start(20000); // 20 seconds game
     moleTimer->start(1500); // Mole pops up every 1.5 second
 }
 
+// Function to end the game
 void MainWindow::endGame()
 {
-    gameTimer->stop();
-    moleTimer->stop();
-    startButton->setEnabled(true);
-    hideMole();
-    qDebug() << "Final Score:" << score;
+    gameTimer->stop();    // Stop the game timer
+    moleTimer->stop();    // Stop the mole timers
+    startButton->setEnabled(true);    // Reenable the start button
+    hideMole();    // Hide the moles
+    qDebug() << "Final Score:" << score;    // Show the final score in debug 
 }
 
+// Function to update game state 
 void MainWindow::updateGame()
 {
-    showMole();
+    showMole();    // Show moles as they are generated
 }
 
-void MainWindow::moleTimeout(int index) {
+// Function to determine if a mole not whacked in the timing requirement
+void MainWindow::moleTimeout(int index) {    // Check if the timed out mole is the current mole
     if (index == currentMole) {
         score -= 1; // Deduct score for not hitting the mole in time
-        scoreLabel->setText(QString("Score: %1").arg(score));
-        hideMole();
+        scoreLabel->setText(QString("Score: %1").arg(score));    // Update score
+        hideMole();    // Hide the mole since its timeout period has expired
     }
 }
 
+/**
+ * Processes the event when a mole is whacked by the player.
+ * Function is triggered when a player clicks on a mole button. It checks if the mole whacked
+ * is the currently active mole. If it is, the player's score is increased, the mole's image is updated,
+ * and a timer is started to hide the mole shortly after. If the wrong mole is hit, the player's score is decreased.
+ *
+ * @param moleIndex The index of the mole that was whacked.
+ */
 void MainWindow::moleWhacked(int moleIndex)
 {
-    qDebug() << "Mole whacked at index:" << moleIndex;
+    qDebug() << "Mole whacked at index:" << moleIndex;    // Debug output to log the whacked mole's index
     if (moleIndex == currentMole)
-    {
-        score += 3;
-        qDebug() << "Score increased to:" << score;
-        moleButtons[moleIndex]->setIcon(QIcon(":/images/bonk.png"));
-        moleButtons[moleIndex]->setIconSize(moleButtons[moleIndex]->size());
-        QTimer::singleShot(500, this, [this] { hideMole();
-        sendCommandToKernelModule("LED_OFF"); // Turn off LED
-        }); // Hide after delay
+    {    // Check if the correct mole was whacked
+        score += 3;    // Increase score on correct hit
+        qDebug() << "Score increased to:" << score;    // Debug what the score was increased to
+        moleButtons[moleIndex]->setIcon(QIcon(":/images/bonk.png"));    // Mole's icon changed to the "whack" image
+        moleButtons[moleIndex]->setIconSize(moleButtons[moleIndex]->size());    // Adjust icon size to fit the button
+        QTimer::singleShot(500, this, [this] { // Start a timer to hide the mole
+            hideMole();    // Hide the mole after a short delay
+            sendCommandToKernelModule("LED_OFF"); // Turn off LED
+        }); 
     }
     else
     {
-        score -= 1;
+        score -= 1;    // Deduct score if wrong mole was hit
         qDebug() << "Score decreased to:" << score;
     }
-    scoreLabel->setText(QString("Score: %1").arg(score));
+    scoreLabel->setText(QString("Score: %1").arg(score));    // Update the score
 }
 
+// Displays a new mole randomly on the game board, and sends command to the kernel to activate the corresponding LED
 void MainWindow::showMole() {
     if (currentMole != -1)
-        hideMole();
+        hideMole();    // Hide the currently active mole if one is visible
 
-    int index = QRandomGenerator::global()->bounded(moleButtons.size());
-    currentMole = index;
-    QString moleColor = moleButtons[index]->styleSheet().split(": ").last();
-    moleButtons[index]->setIcon(QIcon(QString(":/images/%1Mole.png").arg(moleColor)));
-    moleButtons[index]->setIconSize(moleButtons[index]->size());
+    int index = QRandomGenerator::global()->bounded(moleButtons.size());    // Randomly select a mole index
+    currentMole = index;    // Update the current mole index
+    QString moleColor = moleButtons[index]->styleSheet().split(": ").last();    // Get the color of the mole from its style sheet   
+    moleButtons[index]->setIcon(QIcon(QString(":/images/%1Mole.png").arg(moleColor)));    // Set the mole's icon based on its color
+    moleButtons[index]->setIconSize(moleButtons[index]->size());    // Ensure the icon size matches the button size
     moleVisibilityTimers[index]->start(); // Start the timer for this mole
     sendCommandToKernelModule(moleColor + "_ON");   // Send command to turn on corresponding LED
 }
 
 void MainWindow::hideMole() {
-    if (currentMole != -1) {
-        moleButtons[currentMole]->setIcon(QIcon());
+    if (currentMole != -1) {    // Check if there is a currently active mole
+        moleButtons[currentMole]->setIcon(QIcon());    // Remove the mole's icon
         moleVisibilityTimers[currentMole]->stop(); // Stop the timer for this mole
         sendCommandToKernelModule("LED_OFF");   // Send command to hide the mole
-        currentMole = -1;
+        currentMole = -1;    // Reset the currentMole index to -1 indicating no active mole
     }
 }
 
+// Destructor for MainWindow, cleans up allocated resources
 MainWindow::~MainWindow()
 {
-    for (auto timer : moleVisibilityTimers) {
-        timer->stop();
-        delete timer;
+    for (auto timer : moleVisibilityTimers) {    // Loop through all mole visibility timers
+        timer->stop();    // Stop the timer
+        delete timer;    // Delete the timer to free the memory
     }
-    moleTimerThread->quit();
-    moleTimerThread->wait();
+    moleTimerThread->quit();    // Quit the mole timer
+    moleTimerThread->wait();    // Wait for mole timer thread to finish execution
 }
