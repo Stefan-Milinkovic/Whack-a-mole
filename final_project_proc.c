@@ -3,7 +3,7 @@
 #include<linux/kernel.h>
 #include <linux/mutex.h>	// Kernel mutex
 
-#include<linux/gpio.h>   
+#include<linux/gpio.h>      
 #include<linux/interrupt.h>
 #include<linux/delay.h>
 #include <linux/jiffies.h>
@@ -65,37 +65,49 @@ static int button_debounce(void) {
     return 0;
 }
 
-// static int last_button_pressed = -1;	// Variable to store last button pressed
-
-// General button IRQ handler function
+/**
+ * IRQ handler for button presses.
+ * Toggles the corresponding LED and logs the button press to the /proc file.
+ *
+ * @param irq The IRQ number associated with the interrupt.
+ * @param dev_id Device ID used to get the button index.
+ * @return IRQ_HANDLED to indicate that the IRQ has been handled successfully.
+ */
 static irqreturn_t button_irq_handler(int irq, void *dev_id) {
-    int btn_index = (int)(size_t)dev_id;
-    unsigned int led_gpio = GPIO_LEDS[btn_index];
+    int btn_index = (int)(size_t)dev_id;    // Convert device ID to button index
+    unsigned int led_gpio = GPIO_LEDS[btn_index];   // Get GPIO for the corresponding LED
 
+    // Checking if the button is toggled
     if (button_debounce()) {
-        bool is_on;
+        bool is_on; 
 
-        mutex_lock(&lock);
-        is_on = gpio_get_value(led_gpio);
+        mutex_lock(&lock);  // Lock mutex to protect the LED toggling and button presses
+        is_on = gpio_get_value(led_gpio);   // Get current state of LED
         gpio_set_value(led_gpio, !is_on);  // Toggle LED
-        snprintf(PROC_BUF, PROCFS_MAX_SIZE, "Button %d pressed", btn_index);  // Store button press info in PROC_BUF
-        mutex_unlock(&lock);
+        snprintf(PROC_BUF, PROCFS_MAX_SIZE, "Button %d pressed", btn_index);  // Write button press info in PROC_BUF
+        mutex_unlock(&lock);    // unlock the mutex
 
-        pr_info("LED on GPIO %d toggled, Button %d pressed\n", led_gpio, btn_index);
+        pr_info("LED on GPIO %d toggled, Button %d pressed\n", led_gpio, btn_index);    // print previous action to the kernel
     }
-    return IRQ_HANDLED;
+    return IRQ_HANDLED;     // IRQ has been handled
 }
 
-
-// Setup function for each button IRQ
+/**
+ * Function to configure GPIOs and IRQs for each button.
+ * Sets up the GPIO pins for input (buttons) and output (LEDs), and requests IRQs
+ *
+ * @param btn_index The index of the button in the GPIO arrays.
+ * @return 0 on successful setup, -ENODEV if GPIO validation fails, or a negative error code if IRQ request fails.
+ */
 static int setup_button_irq(int btn_index) {
     int retval;
     unsigned int btn_gpio = GPIO_BTNS[btn_index];		// Button GPIO number
     unsigned int led_gpio = GPIO_LEDS[btn_index];		// Corresponding LED GPIO number
 
+    // Validate the GPIO numbers for the button and LED
     if (!gpio_is_valid(led_gpio) || !gpio_is_valid(btn_gpio)){
         pr_info("GPIO invalid: LED %d or Button %d\n", led_gpio, btn_gpio);
-        return -ENODEV;
+        return -ENODEV;     // Return device not found error
     }
 
 	// Request GPIOs for buttons and LEDs
@@ -106,87 +118,111 @@ static int setup_button_irq(int btn_index) {
     gpio_direction_input(btn_gpio);
     gpio_direction_output(led_gpio, 0);
 
-	// Convert GPIO to IRQ number 
+	// Map the button GPIO to IRQ number 
     irq_numbers[btn_index] = gpio_to_irq(btn_gpio);
     
-    // set up threaded IRQ handler
+    // set up threaded IRQ handler for handling button presses
 	retval = request_threaded_irq(irq_numbers[btn_index], NULL, button_irq_handler, IRQF_TRIGGER_LOW | IRQF_ONESHOT, "MyCustomIRQProc", (void *)(size_t)btn_index);
-
-
     if (retval) {
         pr_info("Unable to request IRQ: %d for Button %d\n", retval, btn_index);
         return retval;
     }
 
+    // Print successful IRQ setup
     pr_info("IRQ for Button %d on GPIO %d with LED GPIO %d setup successfully\n", btn_index, btn_gpio, led_gpio);
-    return 0;
+    return 0;   // return success
 }
 
 // ---------- PROC OPERATIONS ----------
+
+/**
+ * Reads data from the /proc file.
+ * Function is called when a process reads from the proc file. It reads the 
+ * contents of the kernel buffer (PROC_BUF) into the user buffer, ensuring that the 
+ * user space receives the current state or last message logged in the buffer.
+ *
+ * @param file Pointer to the file structure
+ * @param user_buffer Buffer in user space where data will be copied.
+ * @param count Size of the user buffer
+ * @param position Current position in the file, used to determine if there's more data to read.
+ * @return The number of bytes copied if successful, 0 if there is no more data, or a negative error code.
+ */
 ssize_t procfile_read(struct file *file, char __user *user_buffer, size_t count, loff_t *position) {
     int len = strlen(PROC_BUF);  // Get the length of the string in PROC_BUF
 
     if (*position > 0) {
-        return 0;  // All data has been read, return 0 to signify no more data to read
+        return 0;  // All data has been read, signify no more data to read
     }
 
     if (count < len) {
-        return -EFAULT;  // User buffer is too small for the data
+        return -EFAULT;  // Buffer provided by user space is too small for data
     }
 
-    mutex_lock(&lock);
+    mutex_lock(&lock);  // Lock the mutex to protect PROC_BUF from concurrent access
     if (copy_to_user(user_buffer, PROC_BUF, len)) {
-        mutex_unlock(&lock);
+        mutex_unlock(&lock);    // Unlock the mutex if copy fails
         return -EFAULT;  // Failed to copy data to user space
     }
 
-    PROC_BUF[0] = '\0';  // Clear the buffer after read
-    *position += len;  // Update the position for the next read operation
-    mutex_unlock(&lock);
+    PROC_BUF[0] = '\0';  // Clear the buffer after successful  read
+    *position += len;   // Update the position for the next read operation
+    mutex_unlock(&lock);    // unlock mutex 
 
     return len;  // Return the number of bytes read
 }
 
-// Handle commands from the QT App
+/**
+ * Handles write operations to the /proc file.
+ * Function is triggered when a process writes to the proc file. It reads the 
+ * command from the user buffer, and performs actions based on the command 
+ * (e.g., turning LEDs on or off).
+ *
+ * @param file Pointer to the file structure
+ * @param user_buffer Buffer in user space containing the command to process.
+ * @param count Number of bytes to read from the user buffer.
+ * @param position Current position in the file
+ * @return The number of bytes processed if successful, or a negative error code.
+ */
 ssize_t procfile_write(struct file *file, const char __user *user_buffer, size_t count, loff_t *position) {
-    char command[20];
+    char command[20];   // Buffer to store command from user space
     if (count > sizeof(command) - 1)
-        return -EINVAL;
+        return -EINVAL;    // Return invalid argument error if command is too long
     
     if (copy_from_user(command, user_buffer, count))
-        return -EFAULT;
+        return -EFAULT; // Return bad address error if copy from user fails
     
-    command[count] = '\0'; // Null terminate the string
+    command[count] = '\0'; // Null terminate the command string
     
-    // Example command parsing
+    // Process the command and toggle the appropriate LED
     if (strcmp(command, "red_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[0], 1);
+        gpio_set_value(GPIO_LEDS[0], 1);    // Turn on the red LED
     } else if (strcmp(command, "blue_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[1], 1);
+        gpio_set_value(GPIO_LEDS[1], 1);    // Turn on the blue LED
     } else if (strcmp(command, "green_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[2], 1);
+        gpio_set_value(GPIO_LEDS[2], 1);    // Turn on the green LED
     } else if (strcmp(command, "yellow_ON") == 0) {
-        gpio_set_value(GPIO_LEDS[3], 1);
+        gpio_set_value(GPIO_LEDS[3], 1);    // Turn on the yellow LED
     } else if (strcmp(command, "LED_OFF") == 0) {
         for (int i = 0; i < 4; i++) {
-            gpio_set_value(GPIO_LEDS[i], 0);
+            gpio_set_value(GPIO_LEDS[i], 0);    // Turn off all LEDs
         }
     }
 
-    return count;
+    return count;   // Return the number of bytes processed
 }
 
 // Initialize the module 
 static int __init my_module_init(void) {
 	
 	// For the proc file
-	memset(PROC_BUF,0,PROCFS_MAX_SIZE);	// Zero Out  buffer 
+	memset(PROC_BUF,0,PROCFS_MAX_SIZE);	// Initialize the PROC_BUF with zeros to prepare it for use
   	proc_create(PROCFS_NAME, 0666, NULL, &proc_fops);	// Create proc file
   	pr_info("Proc init completed \n");
 
 	// "setup_button_irq" function initializes the GPIOs
     for (int i = 0; i < NUM_BUTTONS; ++i) {
         if (setup_button_irq(i) != 0) {
+            pr_info("Failed to initialize button %d\n", i);
             return -1;  // Initialization failed
         }
     }
@@ -201,7 +237,7 @@ static void __exit my_module_exit(void) {
 	
 	// free the IRQ and GPIOs 
     for (int i = 0; i < NUM_BUTTONS; ++i) {
-        free_irq(irq_numbers[i], (void *)&GPIO_LEDS[i]);
+        free_irq(irq_numbers[i], (void *)&GPIO_LEDS[i]);    // Free the IRQ assigned to button using the button's LED GPIO as the device ID
         gpio_free(GPIO_BTNS[i]);
         gpio_free(GPIO_LEDS[i]);
     }
