@@ -15,7 +15,7 @@
 #define PROCFS_NAME "whackamole"	// Proc file location 
 #define PROCFS_MAX_SIZE 	100  	// Sample Size    
 static DEFINE_MUTEX(lock);         
-static char PROC_BUF[PROCFS_MAX_SIZE];       //This is statically allocated, So be aware this is the kernel memory.
+static char PROC_BUF[PROCFS_MAX_SIZE];       //This is statically allocated, be aware this is the kernel memory.
 static bool gameActive = false;  // Tracks game state
 static bool irq_requested[NUM_BUTTONS] = {false}; // Tracks IRQs have been successfully requested
 
@@ -44,7 +44,7 @@ static int procfile_open(struct inode *inode, struct file *file)
 // File is released
 static int procfile_release(struct inode *inode, struct file *file)
 {
-	//When the file is being released, Just print to the kernel dmesg
+    //When the file is being released, Just print to the kernel dmesg
     printk(KERN_INFO "proc file released.....\n");
     return 0;
 }
@@ -52,14 +52,14 @@ static int procfile_release(struct inode *inode, struct file *file)
 // ---------------------------------------
 // ---------- GPIO Declarations ----------
 static unsigned int GPIO_LEDS[] = {4, 17, 22, 6};			// GPIOs for LEDs; RED=4, BLUE=17, GREEN=22, YELLOW=6
-static unsigned int GPIO_BTNS[] = {18, 23, 12, 16};  		// GPIOs for buttons; RED=18, BLUE=23, GREEN=12, YELLOW=16
-static unsigned int irq_numbers[4];  						// IRQ numbers for each button
+static unsigned int GPIO_BTNS[] = {18, 23, 12, 16};  			// GPIOs for buttons; RED=18, BLUE=23, GREEN=12, YELLOW=16
+static unsigned int irq_numbers[4];  					// IRQ numbers for each button
 
 // Debounce function for button presses
 static int button_debounce(void) {
     static unsigned long debounce = 0;
     unsigned long j = jiffies;
-    unsigned long stamp = j + HZ/4;  // Debounce time of 1/4 a second
+    unsigned long stamp = j + HZ/4;  					// Debounce time of 1/4 a second
     
     if (time_after(j, debounce)) {
         debounce = stamp;
